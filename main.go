@@ -19,14 +19,16 @@ func getenv(key string) string {
 
 func main() {
 	godotenv.Load()
+	email := getenv("EMAIL")
+	password := getenv("PASSWORD")
+	token := getenv("AUTHORIZATION_TOKEN")
 
-	imapClient, err := mail.Connect(getenv("EMAIL"), getenv("PASSWORD"))
+	imapClient, err := mail.Connect(email, password)
 	if err != nil {
 		log.Fatalf("Ошибка подключения к почте: %v", err)
 	}
 	defer imapClient.Logout()
 
-	token := getenv("AUTHORIZATION_TOKEN")
 	diskSession := disk.NewSession(token)
 
 	if err := mail.ProcessEmails(imapClient, diskSession); err != nil {

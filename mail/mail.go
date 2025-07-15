@@ -17,11 +17,11 @@ import (
 func Connect(email, password string) (*imapClient.Client, error) {
 	c, err := imapClient.DialTLS("imap.yandex.ru:993", nil)
 	if err != nil {
-		return nil, fmt.Errorf("IMAP dial: %w", err)
+		return nil, fmt.Errorf("IMAP dial: %v", err)
 	}
 
 	if err := c.Login(email, password); err != nil {
-		return nil, fmt.Errorf("login failed: %w", err)
+		return nil, fmt.Errorf("login failed: %v", err)
 	}
 	log.Println("IMAP подключение успешно")
 	return c, nil
@@ -30,7 +30,7 @@ func Connect(email, password string) (*imapClient.Client, error) {
 func ProcessEmails(c *imapClient.Client, diskSession *disk.Session) error {
 	_, err := c.Select("INBOX", false)
 	if err != nil {
-		return fmt.Errorf("выбор INBOX: %w", err)
+		return fmt.Errorf("выбор INBOX: %v", err)
 	}
 
 	seqset := new(imap.SeqSet)
