@@ -14,8 +14,10 @@ import (
 	imapClient "github.com/emersion/go-imap/client"
 )
 
+const imapAddress string = "imap.yandex.ru:993"
+
 func Connect(email, password string) (*imapClient.Client, error) {
-	c, err := imapClient.DialTLS("imap.yandex.ru:993", nil)
+	c, err := imapClient.DialTLS(imapAddress, nil)
 	if err != nil {
 		return nil, fmt.Errorf("IMAP dial: %v", err)
 	}

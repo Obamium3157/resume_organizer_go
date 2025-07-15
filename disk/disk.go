@@ -9,6 +9,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const baseUrl string = "https://cloud-api.yandex.net/v1/disk/"
+const appPath string = "app:/"
+
 type Session struct {
 	Token string
 }
@@ -18,12 +21,12 @@ func NewSession(token string) *Session {
 }
 
 func FindFile(folder, part string, s *Session) (string, error) {
-	path := "app:/"
+	path := appPath
 	if folder != "" {
 		path += folder
 	}
 
-	req, _ := http.NewRequest("GET", "https://cloud-api.yandex.net/v1/disk/resources", nil)
+	req, _ := http.NewRequest("GET", baseUrl+"resources", nil)
 	req.Header.Set("Authorization", "OAuth "+s.Token)
 	q := req.URL.Query()
 	q.Add("path", path)
@@ -51,11 +54,11 @@ func extractFilename(path string) string {
 }
 
 func CreateFolder(folder, token string) error {
-	base := "https://cloud-api.yandex.net/v1/disk/resources"
+	base := baseUrl + "resources"
 	req, _ := http.NewRequest("PUT", base, nil)
 	req.Header.Set("Authorization", "OAuth "+token)
 	q := req.URL.Query()
-	q.Add("path", "app:/"+folder)
+	q.Add("path", appPath+folder)
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := http.DefaultClient.Do(req)
@@ -71,12 +74,12 @@ func CreateFolder(folder, token string) error {
 }
 
 func MoveFile(from, to, token string) error {
-	base := "https://cloud-api.yandex.net/v1/disk/resources/move"
+	base := baseUrl + "resources/move"
 	req, _ := http.NewRequest("POST", base, nil)
 	req.Header.Set("Authorization", "OAuth "+token)
 	q := req.URL.Query()
-	q.Add("from", "app:/"+from)
-	q.Add("path", "app:/"+to)
+	q.Add("from", appPath+from)
+	q.Add("path", appPath+to)
 	q.Add("overwrite", "true")
 	req.URL.RawQuery = q.Encode()
 
