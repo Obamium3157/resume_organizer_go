@@ -2,19 +2,25 @@ package mail
 
 import (
 	"fmt"
+	"github.com/emersion/go-imap"
 	"io"
 	"log"
 	"net/mail"
 	"regexp"
 	"resume_organizer_go/disk"
-	"strconv"
 	"strings"
 
-	"github.com/emersion/go-imap"
 	imapClient "github.com/emersion/go-imap/client"
 )
 
 const imapAddress string = "imap.yandex.ru:993"
+const amountOfChannels int = 10
+
+const inbox string = "INBOX"
+const allMessages string = "1:*"
+const selectReadOnly bool = false
+const firstSender int = 0
+const tildaHostName string = "tilda.ws"
 
 func Connect(email, password string) (*imapClient.Client, error) {
 	c, err := imapClient.DialTLS(imapAddress, nil)
@@ -30,84 +36,144 @@ func Connect(email, password string) (*imapClient.Client, error) {
 }
 
 func ProcessEmails(c *imapClient.Client, diskSession *disk.Session) error {
-	_, err := c.Select("INBOX", false)
-	if err != nil {
-		return fmt.Errorf("выбор INBOX: %v", err)
+	if err := selectMailBox(c, inbox); err != nil {
+		return err
 	}
 
-	seqset := new(imap.SeqSet)
-	seqset.Add("1:*")
-
-	section := &imap.BodySectionName{}
-	items := []imap.FetchItem{imap.FetchEnvelope, imap.FetchBodyStructure, section.FetchItem()}
-
-	messages := make(chan *imap.Message, 10)
-	go func() {
-		err := c.Fetch(seqset, items, messages)
-		if err != nil {
-			log.Fatalf("Fetch error: %v", err)
-		}
-	}()
+	messages, section, err := fetchMessages(c)
+	if err != nil {
+		return err
+	}
 
 	for msg := range messages {
-		if msg.Envelope == nil {
-			continue
-		}
-
-		from := msg.Envelope.From[0].MailboxName + "@" + msg.Envelope.From[0].HostName
-		if !strings.Contains(from, "tilda.ws") {
-			continue
-		}
-
-		body := msg.GetBody(section)
-		if body == nil {
-			continue
-		}
-
-		m, err := mail.ReadMessage(body)
-		if err != nil {
-			log.Printf("Ошибка чтения MIME: %v", err)
-			continue
-		}
-
-		bodyBytes, _ := io.ReadAll(m.Body)
-		bodyStr := string(bodyBytes)
-
-		fields := ParseFields(bodyStr)
-		emailVal := fields["email"]
-		if emailVal == "" {
-			continue
-		}
-		year := msg.Envelope.Date.Year()
-
-		path, err := disk.FindFile("", emailVal, diskSession)
-		if err != nil || path == "" {
-			log.Printf("Файл не найден для: %s", emailVal)
-			continue
-		}
-
-		yearFolder := strconv.Itoa(year)
-		if err := disk.CreateFolder(yearFolder, diskSession.Token); err != nil {
-			log.Printf("Не удалось создать папку: %v", err)
-		}
-
-		newPath := fmt.Sprintf("%s/%s", yearFolder, path)
-		if err := disk.MoveFile(path, newPath, diskSession.Token); err != nil {
-			log.Printf("Ошибка при перемещении файла: %v", err)
-		} else {
-			log.Printf("Файл успешно перемещён: %s -> %s", path, newPath)
+		if err := processMessage(msg, section, diskSession); err != nil {
+			log.Printf("Ошибка при обработке письма: %v", err)
 		}
 	}
 
 	return nil
 }
 
-func ParseFields(body string) map[string]string {
-	re := regexp.MustCompile(`(?i)(email|name|phone|comments):\s*(.+?)(?:<br>|$)`)
+func selectMailBox(c *imapClient.Client, name string) error {
+	_, err := c.Select(name, selectReadOnly)
+	if err != nil {
+		return fmt.Errorf("ошибка при выборе %s: %v", name, err)
+	}
+
+	return nil
+}
+
+func fetchMessages(c *imapClient.Client) (<-chan *imap.Message, *imap.BodySectionName, error) {
+	seqSet := new(imap.SeqSet)
+	if err := seqSet.Add(allMessages); err != nil {
+		return nil, nil, fmt.Errorf("ошибка seqSet.Add: %v", err)
+	}
+
+	section := &imap.BodySectionName{}
+	items := []imap.FetchItem{imap.FetchEnvelope, imap.FetchBodyStructure, section.FetchItem()}
+
+	messages := make(chan *imap.Message, amountOfChannels)
+	go func() {
+		if err := c.Fetch(seqSet, items, messages); err != nil {
+			log.Fatalf("Ошибка client.Fetch: %v", err)
+		}
+	}()
+
+	return messages, section, nil
+}
+
+func processMessage(msg *imap.Message, section *imap.BodySectionName, diskSession *disk.Session) error {
+	if msg.Envelope == nil {
+		return nil
+	}
+
+	hostName := msg.Envelope.From[firstSender].HostName
+	if !strings.Contains(hostName, tildaHostName) {
+		return nil
+	}
+
+	body := msg.GetBody(section)
+	if body == nil {
+		return nil
+	}
+
+	fields, err := parseEmailBody(body)
+	if err != nil {
+		return err
+	}
+
+	link := fields["file_0"]
+	if link == "" {
+		return nil
+	}
+
+	fmt.Println(link)
+
+	filename, success := extractFilename(link)
+	if !success {
+		return nil
+	}
+
+	jobTitle := fields["job_title"]
+	if jobTitle == "" {
+		return nil
+	}
+
+	year := msg.Envelope.Date.Year()
+	return handleResume(filename, jobTitle, year, diskSession)
+}
+
+func parseEmailBody(body io.Reader) (map[string]string, error) {
+	m, err := mail.ReadMessage(body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения MIME: %w", err)
+	}
+
+	bodyBytes, err := io.ReadAll(m.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения тела: %w", err)
+	}
+
+	return parseFields(string(bodyBytes)), nil
+}
+
+func parseFields(body string) map[string]string {
+	re := regexp.MustCompile(`(?i)(file_0|job_title):\s*(.+?)(?:<br>|$)`)
 	matches := re.FindAllStringSubmatch(body, -1)
 	fields := make(map[string]string)
-	for _, m := range matches {
-		fields[strings.ToLower(m[1])] = strings.TrimSpace(m[2])
+	for _, match := range matches {
+		fields[strings.ToLower(match[1])] = strings.TrimSpace(match[2])
 	}
 	return fields
+}
+
+func extractFilename(input string) (string, bool) {
+	re := regexp.MustCompile(`tilda\w+\.(zip|rar|7z)`)
+	match := re.FindString(input)
+	if match != "" {
+		return match, true
+	}
+
+	return "", false
+}
+
+func handleResume(filename string, jobTitle string, year int, session *disk.Session) error {
+	searchFolder := "" // Ищем в руте
+	f, err := disk.FindFile(searchFolder, filename, session)
+	if err != nil || f == "" {
+		return fmt.Errorf("файл не найден для: %s", filename)
+	}
+	finalPath := fmt.Sprintf("%s/%d", jobTitle, year)
+
+	if err := disk.CreateSeriesOfFolders(finalPath, session.Token); err != nil {
+		return fmt.Errorf("не удалось создать структуру папок: %v", err)
+	}
+
+	newPath := fmt.Sprintf("%s/%s", finalPath, f)
+	if err := disk.MoveFile(f, newPath, session.Token); err != nil {
+		return fmt.Errorf("ошибка при перемещении файла: %v", err)
+	}
+
+	log.Printf("Файл успешно перемещён: %s -> %s\n", f, newPath)
+	return nil
 }
