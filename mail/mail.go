@@ -13,14 +13,15 @@ import (
 	imapClient "github.com/emersion/go-imap/client"
 )
 
-const imapAddress string = "imap.yandex.ru:993"
-const amountOfChannels int = 10
-
-const inbox string = "INBOX"
-const allMessages string = "1:*"
-const selectReadOnly bool = false
-const firstSender int = 0
-const tildaHostName string = "tilda.ws"
+const (
+	imapAddress      string = "imap.yandex.ru:993"
+	amountOfChannels int    = 10
+	inbox            string = "INBOX"
+	allMessages      string = "1:*"
+	selectReadOnly   bool   = false
+	firstSender      int    = 0
+	tildaHostName    string = "tilda.ws"
+)
 
 func Connect(email, password string) (*imapClient.Client, error) {
 	c, err := imapClient.DialTLS(imapAddress, nil)
